@@ -1,0 +1,110 @@
+#!/bin/csh
+## RENAME FOR YOUR JOB
+#PBS -N FS_revN_test
+#PBS -l nodes=1:ppn=6
+#PBS -l walltime=6:00:00
+#PBS -V
+## Put both the stderr and stdout into a single file
+#PBS -j oe
+
+set wdir=`pwd`
+#PBS -o $wdir
+cd $PBS_O_WORKDIR
+
+#Set these values for the case
+#Maximum number of iterations to run.
+set MaxSteps=501
+#Set the CFL number, 1 to 5 is a good range depending on flow conditions. Some cases, high mach number, require
+#a lower number (1) for the first ~100 iterations and then raise the number as the flow develops.
+set CFL=5.0
+
+
+# Determine case name from the .sim file in current directory
+#
+set CASE=`ls -f *.sim | sed "s/.sim//g"`
+echo case name is $CASE > $CASE.log
+
+set NPE = `wc -l < $PBS_NODEFILE`
+echo This uses $NPE processors. > $CASE.log
+
+#ADDITIONS FROM STARCCM BATCH FILE
+set wdir=`pwd`
+sed -e "s#casepath#${wdir}/${CASE}.sim#" <<EOF >run.java
+// STAR-CCM+ macro
+// This runs a STAR-CCM+ job in parallel under a batch queing system
+// R. Reynolds
+//=======================================
+package macro;
+
+import java.util.*;
+import java.io.*;
+import java.nio.*;
+import star.flow.*;
+import star.base.neo.*;   // for use with version >= 1.09
+import star.base.report.*;
+import star.common.*;
+import star.coremodule.services.*;
+import star.saturb.*;
+import star.keturb.*;
+import star.kwturb.*;
+//import star.scenefile.*;
+import star.common.StarPlot.*;
+import star.vis.*;
+//import star.segregatedenergy.*;
+//import star.segregatedflow.*;
+import star.coupledflow.*;
+import star.meshing.*;
+
+
+
+public class run extends StarMacro {
+
+BufferedWriter bwout = null;
+
+public void execute() {
+
+try {
+
+Simulation simulation_0 = getActiveSimulation();
+
+// Collecting the simualtion file name
+String simulationName = simulation_0.getPresentationName();
+simulation_0.println("Simulation Name:" + simulationName);
+
+// Open Buffered Input and Output Readers
+// Creating file with name "<sim_file_name>+report.csv"
+bwout = new BufferedWriter(new FileWriter(resolvePath(simulationName +"report.csv")));
+bwout.write("Report Name, Value, Unit, \n");
+
+Collection<Report> reportCollection = simulation_0.getReportManager().getObjects();
+
+for (Report thisReport : reportCollection){
+
+String fieldLocationName = thisReport.getPresentationName();
+Double fieldValue = thisReport.getReportMonitorValue();
+String fieldUnits = thisReport.getUnits().toString();
+String fieldReference = thisReport.getReferences().toString();
+// Printing to chek in output window
+simulation_0.println("Field Location :" + fieldLocationName);
+simulation_0.println(" Field Value :" + fieldValue);
+simulation_0.println(" Field Units :" + fieldUnits);
+thisReport.printReport();
+simulation_0.println("");
+
+// Write Output file as "sim file name"+report.csv
+bwout.write( fieldLocationName + ", " +fieldValue + ", " + fieldUnits +"\n");
+
+}
+bwout.close();
+
+} catch (IOException iOException) {
+}
+
+}
+}  
+EOF
+
+echo -n "======== Run Started " >> $CASE.log
+date >> $CASE.log
+
+/share/apps/starccm/STAR-CCM+8.06.007/star/bin/starccm+ -rsh ssh -batchsystem pbs -batch run.java -exit $CASE.sim >>& $CASE.log
